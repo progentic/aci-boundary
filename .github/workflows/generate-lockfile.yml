@@ -1,0 +1,42 @@
+# .github/workflows/generate-lockfile.yml
+name: Generate Cargo.lock
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  generate-lockfile:
+    name: Generate and commit Cargo.lock
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
+
+      - name: Verify lockfile exists
+        run: test -f Cargo.lock
+
+      - name: Commit Cargo.lock
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- Cargo.lock; then
+            echo "Cargo.lock already up to date."
+            exit 0
+          fi
+
+          git add Cargo.lock
+          git commit -m "Add generated Cargo.lock"
+          git push
