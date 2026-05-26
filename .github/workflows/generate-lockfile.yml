@@ -1,4 +1,3 @@
-# .github/workflows/generate-lockfile.yml
 name: Generate Cargo.lock
 
 on:
@@ -25,15 +24,17 @@ jobs:
         run: cargo generate-lockfile
 
       - name: Verify lockfile exists
-        run: test -f Cargo.lock
+        run: |
+          test -f Cargo.lock
+          git status --short Cargo.lock
 
       - name: Commit Cargo.lock
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          if git diff --quiet -- Cargo.lock; then
-            echo "Cargo.lock already up to date."
+          if [ -z "$(git status --porcelain Cargo.lock)" ]; then
+            echo "Cargo.lock already tracked and up to date."
             exit 0
           fi
 
