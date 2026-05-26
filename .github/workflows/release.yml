@@ -1,0 +1,173 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for manual runs only, e.g. v0.1.0"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  release-gate:
+    name: Release gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Compile check
+        run: cargo check --all-targets --locked
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --all-targets --locked
+
+      - name: Cargo package verification
+        run: cargo package --locked --allow-dirty
+
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: all
+
+  build-release:
+    name: Build release artifacts (${{ matrix.os }})
+    needs: release-gate
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_suffix: linux-x86_64
+            archive_ext: tar.gz
+          - os: macos-latest
+            artifact_suffix: macos-universal
+            archive_ext: tar.gz
+          - os: windows-latest
+            artifact_suffix: windows-x86_64
+            archive_ext: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=manual-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Create artifact staging directory
+        shell: bash
+        run: |
+          mkdir -p dist/aci-boundary
+          cp -R src Cargo.toml README.md deny.toml dist/aci-boundary/ 2>/dev/null || true
+          if [ -f Cargo.lock ]; then cp Cargo.lock dist/aci-boundary/; fi
+          if [ -d target/release ]; then
+            mkdir -p dist/aci-boundary/target-release
+            find target/release -maxdepth 1 -type f -perm -111 -exec cp {} dist/aci-boundary/target-release/ \; || true
+          fi
+
+      - name: Package tar.gz
+        if: matrix.archive_ext == 'tar.gz'
+        shell: bash
+        run: |
+          cd dist
+          tar -czf "aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.tar.gz" aci-boundary
+          shasum -a 256 "aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.tar.gz" > "aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.tar.gz.sha256"
+
+      - name: Package zip
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/aci-boundary -DestinationPath "dist/aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.zip"
+          $hash = Get-FileHash "dist/aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.zip" -Algorithm SHA256
+          "$($hash.Hash)  aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.zip" | Out-File "dist/aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.zip.sha256" -Encoding ascii
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}
+          path: |
+            dist/aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-github-release:
+    name: Publish GitHub Release
+    needs: build-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find release-artifacts -type f -maxdepth 2 -print
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=manual-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            release-artifacts/* \
+            --title "ACI Boundary ${{ steps.version.outputs.version }}" \
+            --notes "Hardened ACI boundary release. Includes source tree, release build outputs where applicable, and SHA-256 checksums." \
+            --verify-tag
