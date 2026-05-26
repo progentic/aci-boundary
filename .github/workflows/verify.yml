@@ -1,0 +1,58 @@
+# .github/workflows/verify.yml
+name: Verify ACI Boundary
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+      - "release/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  rust-verification:
+    name: Rust verification
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Verify Cargo.lock exists
+        run: test -f Cargo.lock
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Compile check
+        run: cargo check --all-targets --locked
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --all-targets --locked
