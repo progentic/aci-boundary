@@ -33,55 +33,6 @@ pub struct BoundaryRuntimePolicy {
     pub approval_reservation_ttl_secs: u64,
 }
 
-struct PolicyGate;
-
-impl PolicyGate {
-    fn verify_and_reserve(
-        invocation: &ValidatedToolInvocation,
-        manifest: &ScopeManifest,
-        session_id: &SessionId,
-        current_time: u64,
-        approval_proof: Option<&HumanApprovalProof>,
-        verifier: &dyn ApprovalVerifier,
-        state_store: &dyn ApprovalStateStore,
-        policy: &BoundaryRuntimePolicy,
-    ) -> Result<ApprovalReservation, BoundaryError> {
-        if manifest.environment == Environment::Production
-            && matches!(
-                invocation.capability(),
-                ToolCapability::WriteFile | ToolCapability::ExecuteCargoTests
-            )
-        {
-            let proof = approval_proof.ok_or_else(|| {
-                BoundaryError::PolicyDenial(
-                    "Production mutations require explicit authorization signatures".into(),
-                )
-            })?;
-
-            let canonical_manifest_hash = manifest.compute_canonical_hash()?;
-
-            let verification_context = crate::boundary::approval::ApprovalVerificationContext {
-                session_id,
-                manifest_hash: &canonical_manifest_hash,
-                invocation_hash: invocation.invocation_hash(),
-                capability: invocation.capability(),
-                current_time,
-            };
-
-            verifier.verify_approval(proof, &verification_context)?;
-            state_store.is_ticket_active(&proof.ticket_reference)?;
-
-            state_store
-                .reserve_approval(&proof.approval_id, policy.approval_reservation_ttl_secs)?;
-
-            return Ok(ApprovalReservation::Reserved {
-                approval_id: proof.approval_id.clone(),
-            });
-        }
-        Ok(ApprovalReservation::NotRequired)
-    }
-}
-
 pub struct ExecutionCoordinator<'a> {
     pub session_id: SessionId,
     pub current_sequence: &'a mut u64,
@@ -93,28 +44,94 @@ pub struct ExecutionCoordinator<'a> {
     pub policy: &'a BoundaryRuntimePolicy,
 }
 
-fn emit_audit(
-    sink: &dyn AuditSink,
+struct PolicyEvaluation<'a> {
+    invocation: &'a ValidatedToolInvocation,
+    manifest: &'a ScopeManifest,
+    session_id: &'a SessionId,
+    current_time: u64,
+    approval_proof: Option<&'a HumanApprovalProof>,
+    verifier: &'a dyn ApprovalVerifier,
+    state_store: &'a dyn ApprovalStateStore,
+    policy: &'a BoundaryRuntimePolicy,
+}
+
+struct AuditEmission<'a> {
+    sink: &'a dyn AuditSink,
     sequence: u64,
     timestamp: u64,
-    session_id: &SessionId,
-    manifest: &ScopeManifest,
-    proposal_hash: &str,
+    session_id: &'a SessionId,
+    manifest: &'a ScopeManifest,
+    proposal_hash: &'a str,
     outcome: AuditOutcome,
-    failure_context: &str,
-) -> Result<(), BoundaryError> {
-    sink.emit_record(AuditRecord {
-        event_id: uuid::Uuid::new_v4().to_string(),
-        sequence_number: sequence,
-        timestamp,
-        session_id: session_id.clone(),
-        manifest_id: manifest.manifest_id.clone(),
-        raw_proposal_hash: proposal_hash.to_string(),
-        outcome,
-    })
-    .map_err(|audit_err| {
-        BoundaryError::AuditSystemFailure(format!("{failure_context}: {audit_err}"))
-    })
+    failure_context: &'a str,
+}
+
+struct PolicyGate;
+
+impl PolicyGate {
+    fn verify_and_reserve(
+        evaluation: PolicyEvaluation<'_>,
+    ) -> Result<ApprovalReservation, BoundaryError> {
+        if evaluation.manifest.environment == Environment::Production
+            && matches!(
+                evaluation.invocation.capability(),
+                ToolCapability::WriteFile | ToolCapability::ExecuteCargoTests
+            )
+        {
+            let proof = evaluation.approval_proof.ok_or_else(|| {
+                BoundaryError::PolicyDenial(
+                    "Production mutations require explicit authorization signatures".into(),
+                )
+            })?;
+
+            let canonical_manifest_hash = evaluation.manifest.compute_canonical_hash()?;
+
+            let verification_context = crate::boundary::approval::ApprovalVerificationContext {
+                session_id: evaluation.session_id,
+                manifest_hash: &canonical_manifest_hash,
+                invocation_hash: evaluation.invocation.invocation_hash(),
+                capability: evaluation.invocation.capability(),
+                current_time: evaluation.current_time,
+            };
+
+            evaluation
+                .verifier
+                .verify_approval(proof, &verification_context)?;
+            evaluation
+                .state_store
+                .is_ticket_active(&proof.ticket_reference)?;
+            evaluation.state_store.reserve_approval(
+                &proof.approval_id,
+                evaluation.policy.approval_reservation_ttl_secs,
+            )?;
+
+            return Ok(ApprovalReservation::Reserved {
+                approval_id: proof.approval_id.clone(),
+            });
+        }
+
+        Ok(ApprovalReservation::NotRequired)
+    }
+}
+
+fn emit_audit(emission: AuditEmission<'_>) -> Result<(), BoundaryError> {
+    emission
+        .sink
+        .emit_record(AuditRecord {
+            event_id: uuid::Uuid::new_v4().to_string(),
+            sequence_number: emission.sequence,
+            timestamp: emission.timestamp,
+            session_id: emission.session_id.clone(),
+            manifest_id: emission.manifest.manifest_id.clone(),
+            raw_proposal_hash: emission.proposal_hash.to_string(),
+            outcome: emission.outcome,
+        })
+        .map_err(|audit_err| {
+            BoundaryError::AuditSystemFailure(format!(
+                "{}: {}",
+                emission.failure_context, audit_err
+            ))
+        })
 }
 
 pub async fn run_isolated_pipeline_step(
@@ -132,38 +149,42 @@ pub async fn run_isolated_pipeline_step(
 
     if *coordinator.remaining_step_budget == 0 {
         let err = BoundaryError::PolicyDenial("Transaction step budget exhausted".into());
-        emit_audit(
-            coordinator.audit_sink,
-            *coordinator.current_sequence,
+
+        emit_audit(AuditEmission {
+            sink: coordinator.audit_sink,
+            sequence: *coordinator.current_sequence,
             timestamp,
-            &coordinator.session_id,
+            session_id: &coordinator.session_id,
             manifest,
-            &proposal_hash,
-            AuditOutcome::PolicyDenied {
+            proposal_hash: &proposal_hash,
+            outcome: AuditOutcome::PolicyDenied {
                 reason: err.to_string(),
             },
-            "Terminal budget denial logging failed",
-        )?;
+            failure_context: "Terminal budget denial logging failed",
+        })?;
+
         *coordinator.current_sequence += 1;
         return Err(err);
     }
+
     *coordinator.remaining_step_budget -= 1;
 
     let raw_proposal = match RawOutputParser::parse(raw_payload) {
         Ok(prop) => prop,
         Err(e) => {
-            emit_audit(
-                coordinator.audit_sink,
-                *coordinator.current_sequence,
+            emit_audit(AuditEmission {
+                sink: coordinator.audit_sink,
+                sequence: *coordinator.current_sequence,
                 timestamp,
-                &coordinator.session_id,
+                session_id: &coordinator.session_id,
                 manifest,
-                &proposal_hash,
-                AuditOutcome::ParseDenied {
+                proposal_hash: &proposal_hash,
+                outcome: AuditOutcome::ParseDenied {
                     reason: e.to_string(),
                 },
-                "Terminal parse denial logging failed",
-            )?;
+                failure_context: "Terminal parse denial logging failed",
+            })?;
+
             *coordinator.current_sequence += 1;
             return Err(e);
         }
@@ -174,72 +195,74 @@ pub async fn run_isolated_pipeline_step(
     let invocation = match ValidatedToolInvocation::try_from_proposal(raw_proposal, manifest) {
         Ok(inv) => inv,
         Err(e) => {
-            emit_audit(
-                coordinator.audit_sink,
-                *coordinator.current_sequence,
+            emit_audit(AuditEmission {
+                sink: coordinator.audit_sink,
+                sequence: *coordinator.current_sequence,
                 timestamp,
-                &coordinator.session_id,
+                session_id: &coordinator.session_id,
                 manifest,
-                &proposal_hash,
-                AuditOutcome::ValidationDenied {
+                proposal_hash: &proposal_hash,
+                outcome: AuditOutcome::ValidationDenied {
                     proposed_capability,
                     reason: e.to_string(),
                 },
-                "Terminal validation denial logging failed",
-            )?;
+                failure_context: "Terminal validation denial logging failed",
+            })?;
+
             *coordinator.current_sequence += 1;
             return Err(e);
         }
     };
 
-    let reservation = match PolicyGate::verify_and_reserve(
-        &invocation,
+    let reservation = match PolicyGate::verify_and_reserve(PolicyEvaluation {
+        invocation: &invocation,
         manifest,
-        &coordinator.session_id,
-        timestamp,
-        approval,
-        coordinator.verifier,
-        coordinator.state_store,
-        coordinator.policy,
-    ) {
+        session_id: &coordinator.session_id,
+        current_time: timestamp,
+        approval_proof: approval,
+        verifier: coordinator.verifier,
+        state_store: coordinator.state_store,
+        policy: coordinator.policy,
+    }) {
         Ok(res) => res,
         Err(e) => {
-            emit_audit(
-                coordinator.audit_sink,
-                *coordinator.current_sequence,
+            emit_audit(AuditEmission {
+                sink: coordinator.audit_sink,
+                sequence: *coordinator.current_sequence,
                 timestamp,
-                &coordinator.session_id,
+                session_id: &coordinator.session_id,
                 manifest,
-                &proposal_hash,
-                AuditOutcome::PolicyDenied {
+                proposal_hash: &proposal_hash,
+                outcome: AuditOutcome::PolicyDenied {
                     reason: e.to_string(),
                 },
-                "Terminal policy denial logging failed",
-            )?;
+                failure_context: "Terminal policy denial logging failed",
+            })?;
+
             *coordinator.current_sequence += 1;
             return Err(e);
         }
     };
 
-    if let Err(audit_err) = emit_audit(
-        coordinator.audit_sink,
-        *coordinator.current_sequence,
+    if let Err(audit_err) = emit_audit(AuditEmission {
+        sink: coordinator.audit_sink,
+        sequence: *coordinator.current_sequence,
         timestamp,
-        &coordinator.session_id,
+        session_id: &coordinator.session_id,
         manifest,
-        &proposal_hash,
-        AuditOutcome::ExecutionStarted {
+        proposal_hash: &proposal_hash,
+        outcome: AuditOutcome::ExecutionStarted {
             capability: proposed_capability,
         },
-        "Pre-execution audit logging failed",
-    ) {
+        failure_context: "Pre-execution audit logging failed",
+    }) {
         if let ApprovalReservation::Reserved { approval_id } = &reservation {
-            let _ = coordinator
-                .state_store
-                .release_reserved_approval(approval_id);
+            let _ = coordinator.state_store.release_reserved_approval(approval_id);
         }
+
         return Err(audit_err);
     }
+
     *coordinator.current_sequence += 1;
 
     if let ApprovalReservation::Reserved { approval_id } = reservation {
@@ -247,18 +270,19 @@ pub async fn run_isolated_pipeline_step(
             .state_store
             .consume_reserved_approval(&approval_id)
         {
-            emit_audit(
-                coordinator.audit_sink,
-                *coordinator.current_sequence,
+            emit_audit(AuditEmission {
+                sink: coordinator.audit_sink,
+                sequence: *coordinator.current_sequence,
                 timestamp,
-                &coordinator.session_id,
+                session_id: &coordinator.session_id,
                 manifest,
-                &proposal_hash,
-                AuditOutcome::ApprovalConsumptionFailed {
+                proposal_hash: &proposal_hash,
+                outcome: AuditOutcome::ApprovalConsumptionFailed {
                     reason: e.to_string(),
                 },
-                "Failed to log consumption failure",
-            )?;
+                failure_context: "Failed to log consumption failure",
+            })?;
+
             *coordinator.current_sequence += 1;
             return Err(e);
         }
@@ -266,34 +290,36 @@ pub async fn run_isolated_pipeline_step(
 
     match coordinator.executor.execute(invocation).await {
         Ok(output_message) => {
-            emit_audit(
-                coordinator.audit_sink,
-                *coordinator.current_sequence,
+            emit_audit(AuditEmission {
+                sink: coordinator.audit_sink,
+                sequence: *coordinator.current_sequence,
                 timestamp,
-                &coordinator.session_id,
+                session_id: &coordinator.session_id,
                 manifest,
-                &proposal_hash,
-                AuditOutcome::ExecutionSucceeded {
+                proposal_hash: &proposal_hash,
+                outcome: AuditOutcome::ExecutionSucceeded {
                     capability: proposed_capability,
                 },
-                "Execution succeeded, but completion audit failed",
-            )?;
+                failure_context: "Execution succeeded, but completion audit failed",
+            })?;
+
             *coordinator.current_sequence += 1;
             Ok(output_message)
         }
         Err(err) => {
-            let audit_result = emit_audit(
-                coordinator.audit_sink,
-                *coordinator.current_sequence,
+            let audit_result = emit_audit(AuditEmission {
+                sink: coordinator.audit_sink,
+                sequence: *coordinator.current_sequence,
                 timestamp,
-                &coordinator.session_id,
+                session_id: &coordinator.session_id,
                 manifest,
-                &proposal_hash,
-                AuditOutcome::ExecutionFailed {
+                proposal_hash: &proposal_hash,
+                outcome: AuditOutcome::ExecutionFailed {
                     error: err.to_string(),
                 },
-                "Execution failure logging failed",
-            );
+                failure_context: "Execution failure logging failed",
+            });
+
             *coordinator.current_sequence += 1;
 
             match audit_result {
