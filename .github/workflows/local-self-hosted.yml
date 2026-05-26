@@ -1,0 +1,65 @@
+name: Local Desktop Self-Hosted Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  local-build-and-test:
+    name: Build on local self-hosted runner
+    runs-on:
+      - self-hosted
+      - aci-local
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show local environment
+        run: |
+          rustc --version
+          cargo --version
+          pwd
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Compile check
+        run: cargo check --all-targets --locked
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --all-targets --locked
+
+      - name: Build release locally
+        run: cargo build --release --locked
+
+      - name: Stage local release
+        shell: bash
+        run: |
+          mkdir -p local-release/aci-boundary
+          cp -R src Cargo.toml README.md deny.toml local-release/aci-boundary/ 2>/dev/null || true
+          if [ -f Cargo.lock ]; then cp Cargo.lock local-release/aci-boundary/; fi
+          tar -czf local-release/aci-boundary-local-${GITHUB_RUN_NUMBER}.tar.gz -C local-release aci-boundary
+          shasum -a 256 local-release/aci-boundary-local-${GITHUB_RUN_NUMBER}.tar.gz > local-release/aci-boundary-local-${GITHUB_RUN_NUMBER}.tar.gz.sha256
+
+      - name: Upload local build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aci-boundary-local-${{ github.run_number }}
+          path: |
+            local-release/*.tar.gz
+            local-release/*.sha256
+          if-no-files-found: error
+          retention-days: 14
