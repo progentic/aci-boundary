@@ -37,11 +37,6 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Show toolchain
-        run: |
-          rustc --version
-          cargo --version
-
       - name: Verify Cargo.lock exists
         run: test -f Cargo.lock
 
