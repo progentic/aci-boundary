@@ -97,7 +97,9 @@ impl<K: ApprovalKeyring> ApprovalVerifier for Ed25519TicketingVerifier<K> {
             return Err(BoundaryError::PolicyDenial("Manifest hash mismatch".into()));
         }
         if proof.expected_invocation_hash != *context.invocation_hash {
-            return Err(BoundaryError::PolicyDenial("Invocation hash mismatch".into()));
+            return Err(BoundaryError::PolicyDenial(
+                "Invocation hash mismatch".into(),
+            ));
         }
         if proof.capability != context.capability {
             return Err(BoundaryError::PolicyDenial("Capability mismatch".into()));
@@ -107,7 +109,9 @@ impl<K: ApprovalKeyring> ApprovalVerifier for Ed25519TicketingVerifier<K> {
             return Err(BoundaryError::PolicyDenial("Approval token expired".into()));
         }
         if context.current_time < proof.issued_at {
-            return Err(BoundaryError::PolicyDenial("Approval token issued in future".into()));
+            return Err(BoundaryError::PolicyDenial(
+                "Approval token issued in future".into(),
+            ));
         }
 
         self.keyring
@@ -122,7 +126,10 @@ impl<K: ApprovalKeyring> ApprovalVerifier for Ed25519TicketingVerifier<K> {
             format!("approver_identity={}", proof.approver_identity.as_str()),
             format!("session_id={}", proof.session_id.as_str()),
             format!("manifest_hash={}", proof.expected_manifest_hash.as_str()),
-            format!("invocation_hash={}", proof.expected_invocation_hash.as_str()),
+            format!(
+                "invocation_hash={}",
+                proof.expected_invocation_hash.as_str()
+            ),
             format!("capability={}", proof.capability.wire_name()),
             format!("ticket_reference={}", proof.ticket_reference.as_str()),
             format!("issued_at={}", proof.issued_at),

@@ -17,11 +17,7 @@ impl TryFrom<String> for IsolatedPath {
         }
 
         let path = Path::new(&raw);
-        if path.is_absolute()
-            || path
-                .components()
-                .any(|c| matches!(c, Component::Prefix(_)))
-        {
+        if path.is_absolute() || path.components().any(|c| matches!(c, Component::Prefix(_))) {
             return Err(BoundaryError::InvalidPathSpecification);
         }
 
@@ -70,7 +66,10 @@ impl TryFrom<String> for FileContent {
             return Err(BoundaryError::NullByteDetected);
         }
         if raw.len() > 1024 * 1024 * 2 {
-            return Err(BoundaryError::PayloadLimitExceeded(raw.len(), 1024 * 1024 * 2));
+            return Err(BoundaryError::PayloadLimitExceeded(
+                raw.len(),
+                1024 * 1024 * 2,
+            ));
         }
         Ok(Self(raw))
     }

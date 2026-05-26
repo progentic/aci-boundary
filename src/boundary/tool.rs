@@ -61,7 +61,11 @@ impl ValidatedToolInvocation {
         let kind = match proposal {
             RawToolProposal::ReadFile { path } => {
                 let isolated = IsolatedPath::try_from(path)?;
-                if !manifest.read_scopes.iter().any(|scope| scope.authorizes(&isolated)) {
+                if !manifest
+                    .read_scopes
+                    .iter()
+                    .any(|scope| scope.authorizes(&isolated))
+                {
                     return Err(BoundaryError::PolicyDenial(
                         "Read target unauthorized by path-scope checks".into(),
                     ));
@@ -71,7 +75,11 @@ impl ValidatedToolInvocation {
             RawToolProposal::WriteFile { path, content } => {
                 let isolated = IsolatedPath::try_from(path)?;
                 let validated_content = FileContent::try_from(content)?;
-                if !manifest.write_scopes.iter().any(|scope| scope.authorizes(&isolated)) {
+                if !manifest
+                    .write_scopes
+                    .iter()
+                    .any(|scope| scope.authorizes(&isolated))
+                {
                     return Err(BoundaryError::PolicyDenial(
                         "Write target unauthorized by path-scope checks".into(),
                     ));

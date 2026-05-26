@@ -10,7 +10,9 @@ pub struct WorkspaceRoot {
 impl WorkspaceRoot {
     pub fn try_new(base_path: PathBuf) -> Result<Self, std::io::Error> {
         let canonical = base_path.canonicalize()?;
-        Ok(Self { root_path: canonical })
+        Ok(Self {
+            root_path: canonical,
+        })
     }
 
     pub fn root_path(&self) -> &Path {
@@ -57,7 +59,9 @@ impl WorkspaceRoot {
                             return Err(BoundaryError::SymlinkEscalation);
                         }
                     }
-                    Err(io_err) => return Err(BoundaryError::StorageAccessError(io_err.to_string())),
+                    Err(io_err) => {
+                        return Err(BoundaryError::StorageAccessError(io_err.to_string()))
+                    }
                 }
             }
         }

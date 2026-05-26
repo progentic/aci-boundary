@@ -71,10 +71,8 @@ impl PolicyGate {
             verifier.verify_approval(proof, &verification_context)?;
             state_store.is_ticket_active(&proof.ticket_reference)?;
 
-            state_store.reserve_approval(
-                &proof.approval_id,
-                policy.approval_reservation_ttl_secs,
-            )?;
+            state_store
+                .reserve_approval(&proof.approval_id, policy.approval_reservation_ttl_secs)?;
 
             return Ok(ApprovalReservation::Reserved {
                 approval_id: proof.approval_id.clone(),
@@ -236,14 +234,19 @@ pub async fn run_isolated_pipeline_step(
         "Pre-execution audit logging failed",
     ) {
         if let ApprovalReservation::Reserved { approval_id } = &reservation {
-            let _ = coordinator.state_store.release_reserved_approval(approval_id);
+            let _ = coordinator
+                .state_store
+                .release_reserved_approval(approval_id);
         }
         return Err(audit_err);
     }
     *coordinator.current_sequence += 1;
 
     if let ApprovalReservation::Reserved { approval_id } = reservation {
-        if let Err(e) = coordinator.state_store.consume_reserved_approval(&approval_id) {
+        if let Err(e) = coordinator
+            .state_store
+            .consume_reserved_approval(&approval_id)
+        {
             emit_audit(
                 coordinator.audit_sink,
                 *coordinator.current_sequence,

@@ -51,13 +51,49 @@ macro_rules! declare_exact_hex_id {
     };
 }
 
-declare_bounded_id!(ManifestId, 64, "Invalid ManifestId format", |c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-declare_bounded_id!(SessionId, 64, "Invalid SessionId format", |c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-declare_bounded_id!(ApprovalId, 64, "Invalid ApprovalId format", |c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-declare_bounded_id!(ApprovalIssuerId, 64, "Invalid ApprovalIssuerId format", |c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-declare_bounded_id!(ActorId, 128, "Invalid ActorId format", |c| c.is_ascii_alphanumeric() || c == '@' || c == '.' || c == '_' || c == '-');
-declare_bounded_id!(TicketReference, 128, "Invalid TicketReference format", |c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '/');
+declare_bounded_id!(ManifestId, 64, "Invalid ManifestId format", |c| c
+    .is_ascii_alphanumeric()
+    || c == '_'
+    || c == '-');
+declare_bounded_id!(SessionId, 64, "Invalid SessionId format", |c| c
+    .is_ascii_alphanumeric()
+    || c == '_'
+    || c == '-');
+declare_bounded_id!(ApprovalId, 64, "Invalid ApprovalId format", |c| c
+    .is_ascii_alphanumeric()
+    || c == '_'
+    || c == '-');
+declare_bounded_id!(
+    ApprovalIssuerId,
+    64,
+    "Invalid ApprovalIssuerId format",
+    |c| c.is_ascii_alphanumeric() || c == '_' || c == '-'
+);
+declare_bounded_id!(ActorId, 128, "Invalid ActorId format", |c| c
+    .is_ascii_alphanumeric()
+    || c == '@'
+    || c == '.'
+    || c == '_'
+    || c == '-');
+declare_bounded_id!(
+    TicketReference,
+    128,
+    "Invalid TicketReference format",
+    |c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '/'
+);
 
-declare_exact_hex_id!(ManifestHash, 64, "ManifestHash must be exactly 64 hex characters");
-declare_exact_hex_id!(InvocationHash, 64, "InvocationHash must be exactly 64 hex characters");
-declare_exact_hex_id!(ApprovalSignature, 128, "ApprovalSignature must be exactly 128 hex characters");
+declare_exact_hex_id!(
+    ManifestHash,
+    64,
+    "ManifestHash must be exactly 64 hex characters"
+);
+declare_exact_hex_id!(
+    InvocationHash,
+    64,
+    "InvocationHash must be exactly 64 hex characters"
+);
+declare_exact_hex_id!(
+    ApprovalSignature,
+    128,
+    "ApprovalSignature must be exactly 128 hex characters"
+);

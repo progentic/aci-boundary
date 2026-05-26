@@ -8,7 +8,9 @@ pub enum BoundaryError {
     #[error("Malicious null-byte sequence detected")]
     NullByteDetected,
 
-    #[error("Path specification violation: path cannot be empty, absolute, or traverse out of bounds")]
+    #[error(
+        "Path specification violation: path cannot be empty, absolute, or traverse out of bounds"
+    )]
     InvalidPathSpecification,
 
     #[error("Symlink escalation or breakout from workspace root detected during ancestry descent")]
