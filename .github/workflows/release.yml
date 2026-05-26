@@ -128,7 +128,7 @@ jobs:
           "$($hash.Hash)  aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.zip" | Out-File "dist/aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}.zip.sha256" -Encoding ascii
 
       - name: Upload release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aci-boundary-${{ steps.version.outputs.version }}-${{ matrix.artifact_suffix }}
           path: |
