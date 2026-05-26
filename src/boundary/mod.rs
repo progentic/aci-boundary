@@ -257,9 +257,10 @@ pub async fn run_isolated_pipeline_step(
         failure_context: "Pre-execution audit logging failed",
     }) {
         if let ApprovalReservation::Reserved { approval_id } = &reservation {
-            let _ = coordinator.state_store.release_reserved_approval(approval_id);
+            let _ = coordinator
+                .state_store
+                .release_reserved_approval(approval_id);
         }
-
         return Err(audit_err);
     }
 
