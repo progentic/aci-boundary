@@ -1,0 +1,39 @@
+# deny.toml for strict cryptographic and boundary compliance
+
+[advisories]
+vulnerability = "deny"
+unmaintained = "deny"
+yanked = "deny"
+ignore = []
+
+[licenses]
+unlicensed = "deny"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+]
+deny = [
+    "GPL-1.0-only", "GPL-1.0-or-later",
+    "GPL-2.0-only", "GPL-2.0-or-later",
+    "GPL-3.0-only", "GPL-3.0-or-later",
+    "AGPL-1.0-only", "AGPL-1.0-or-later",
+    "AGPL-3.0-only", "AGPL-3.0-or-later",
+]
+copyleft = "deny"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = [
+    { name = "ring" },
+    { name = "openssl" },
+    { name = "rust-crypto" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
