@@ -1,0 +1,74 @@
+name: Deploy to VPS or Cloud Instance
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to deploy, e.g. v0.1.0"
+        required: true
+        type: string
+      artifact_name:
+        description: "Artifact filename from the GitHub Release"
+        required: true
+        type: string
+        default: "aci-boundary-v0.1.0-linux-x86_64.tar.gz"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-vps-${{ github.event.inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy release artifact
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/aci_deploy_key
+          chmod 600 ~/.ssh/aci_deploy_key
+          ssh-keyscan -p "${{ secrets.VPS_PORT || '22' }}" "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Download release artifact and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p deploy-artifact
+          gh release download "${{ github.event.inputs.release_tag }}" \
+            --pattern "${{ github.event.inputs.artifact_name }}" \
+            --pattern "${{ github.event.inputs.artifact_name }}.sha256" \
+            --dir deploy-artifact
+
+      - name: Verify checksum
+        run: |
+          cd deploy-artifact
+          sha256sum -c "${{ github.event.inputs.artifact_name }}.sha256"
+
+      - name: Upload artifact to host
+        run: |
+          scp -i ~/.ssh/aci_deploy_key \
+            -P "${{ secrets.VPS_PORT || '22' }}" \
+            deploy-artifact/${{ github.event.inputs.artifact_name }} \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/${{ github.event.inputs.artifact_name }}"
+
+      - name: Install on host
+        run: |
+          ssh -i ~/.ssh/aci_deploy_key \
+            -p "${{ secrets.VPS_PORT || '22' }}" \
+            "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" \
+            'set -euo pipefail
+             DEPLOY_PATH="${{ secrets.VPS_DEPLOY_PATH }}"
+             ARTIFACT="/tmp/${{ github.event.inputs.artifact_name }}"
+             sudo mkdir -p "$DEPLOY_PATH"
+             TMP_DIR="$(mktemp -d)"
+             tar -xzf "$ARTIFACT" -C "$TMP_DIR"
+             sudo rsync -a --delete "$TMP_DIR/aci-boundary/" "$DEPLOY_PATH/"
+             rm -rf "$TMP_DIR"
+             rm -f "$ARTIFACT"
+             echo "ACI boundary deployed to $DEPLOY_PATH"'
