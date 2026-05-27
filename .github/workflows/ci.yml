@@ -49,6 +49,10 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: Verify Cargo.lock exists
+        run: test -f Cargo.lock
+        shell: bash
+
       - name: Format check
         run: cargo fmt --all -- --check
 
@@ -75,5 +79,4 @@ jobs:
       - name: Run cargo-deny
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check
-          arguments: all
+          command: check all

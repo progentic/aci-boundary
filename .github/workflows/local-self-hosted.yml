@@ -30,6 +30,10 @@ jobs:
           cargo --version
           pwd
 
+      - name: Verify Cargo.lock exists
+        run: test -f Cargo.lock
+        shell: bash
+
       - name: Format check
         run: cargo fmt --all -- --check
 
